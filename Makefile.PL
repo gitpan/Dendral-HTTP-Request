@@ -2,18 +2,18 @@ use 5.008001;
 use strict;
 use ExtUtils::MakeMaker;
 
-my @IncludeDirs = ($ENV{'APACHE_INCLUDE'},
-                   "/usr/local/include/apache",
-                   "/usr/include/apache",
-                   "/usr/include/apache13",
-		   "/usr/include/apache-1.3",
-                   "/usr/include/apache2",
-                   "/opt/include/apache",
-                   "/usr/local/apache/include");
+use Getopt::Long ();
+use strict;
 
-my @APRIncludeDirs = ($ENV{'APR_INCLUDE'},
-                      "/usr/local/include/apr-1",
-                      "/usr/include/apr-1");
+my $apache_include = undef;
+my $apr_include = undef;
+
+Getopt::Long::GetOptions('apache-include=s' => \$apache_include,
+                         'apr-include=s' => \$apr_include,
+                        );
+                        
+$apache_include = "-I$apache_include" if $apache_include; 
+
 
 sub NeedToInstallApache
 {
@@ -25,42 +25,66 @@ sub NeedToInstallApache
 	exit;
 }
 
-sub SearchDir
+
+my $mod_perl;
+
+# Get Apache includes
+eval { require Apache::src; };
+unless ($@)
 {
-	my $File = shift;
-	foreach (@_)
+	$mod_perl = 1;
+	$apache_include ||= Apache::src -> new -> inc;
+}
+
+unless ($mod_perl)
+{
+	eval { require Apache2::ParseSource; };
+	unless ($@)
 	{
-		return $_ if (-e "$_/$File");
+		$mod_perl = 2;
+		$apache_include ||= '-I' . join(' -I', @{Apache2::ParseSource -> new -> includes});
 	}
-return undef;
 }
 
 print "perl thinks the current OS is '$^O'\n";
 
+unless ($mod_perl) { NeedToInstallApache('Cannot find mod_perl modules.'); }
+unless ($apache_include) { NeedToInstallApache("Cannot find header file httpd.h"); exit; }
 
-my $CC  = 'cc';
 
-my $ApacheIncludeDir = SearchDir('httpd.h', @IncludeDirs);
-unless ($ApacheIncludeDir) { NeedToInstallApache("Cannot find header file httpd.h"); exit; }
+my $apr_cflags;
+my $apr_libs;
+my $BUILD_REQ = {};
 
-my $APRIncludeDir = '.';
-if ($ApacheIncludeDir =~/apache2/)
+# Include APR
+if ($mod_perl == 2 )
 {
-	$APRIncludeDir = SearchDir('apr.h', @APRIncludeDirs);
+	$BUILD_REQ = {'ExtUtils::PkgConfig' => '1.03'};
+	eval { require ExtUtils::PkgConfig; };
+	unless ($@)
+	{
+		my %apr_info = ExtUtils::PkgConfig -> find('apr-1');
+		$apr_cflags = defined $apr_include ? " -I$apr_include " : $apr_info{cflags};
+		$apr_libs = defined $apr_include ? "" : $apr_info{libs};
+	}
 }
 
+
 WriteMakefile(
-	'NAME'          => 'Dendral::HTTP::Request',
-	'VERSION_FROM'  => 'lib/Dendral/HTTP/Request.pm',
-	'DEFINE'        => '-O2 -g ',
-	'INC'           => "-I$ApacheIncludeDir -I/usr/include -I/usr/local/include -I. -I$APRIncludeDir ",
-	'CC'            => $CC,
-	'LD'            => $CC,
+	NAME          => 'Dendral::HTTP::Request',
+	VERSION_FROM  => 'lib/Dendral/HTTP/Request.pm',
+	($ExtUtils::MakeMaker::VERSION >= 6.56 ? 
+		(BUILD_REQUIRES    => $BUILD_REQ) :
+		(PREREQ_PM         => $BUILD_REQ) 
+	),
+	INC           => "$apache_include -I/usr/include -I/usr/local/include -I. ",
+	CCFLAGS       => $apr_cflags,
+	LIBS          => $apr_libs,
 
-	'C'             => ['Request.c', 'RequestParser.c', 'DefaultParser.c', 'MultipartParser.c', 'UrlencodedParser.c'],
-	'XS'            => {'Request.xs' => 'Request.c'},
-	'OBJECT'        => '$(O_FILES)',
+	C             => ['Request.c', 'RequestParser.c', 'DefaultParser.c', 'MultipartParser.c', 'UrlencodedParser.c'],
+	XS            => {'Request.xs' => 'Request.c'},
+	OBJECT        => '$(O_FILES)',
 
-	'TYPEMAPS'      => ['perlobject.map'],
-	'AUTHOR'        => 'Andrei V. Shetuhin <reki@reki.ru>'
+	TYPEMAPS      => ['perlobject.map'],
+	AUTHOR        => 'Andrei V. Shetuhin <reki@reki.ru>'
 );

@@ -166,6 +166,7 @@ return NULL;
  */
 static void StoreFile(HV * pData, SV * pKey, HV * pVal)
 {
+
 	STRLEN        iKeyLen = 0;
 	const char  * sKey    = NULL;
 
@@ -174,7 +175,7 @@ static void StoreFile(HV * pData, SV * pKey, HV * pVal)
 
 	if (SvTYPE(pData) != SVt_PVHV)
 	{
-		croak("StorePair: Impossible happened: SvTYPE(pData) != SVt_PVHV");
+		croak("StoreFile: Impossible happened: SvTYPE(pData) != SVt_PVHV");
 		return;
 	}
 
@@ -190,7 +191,7 @@ static void StoreFile(HV * pData, SV * pKey, HV * pVal)
 	pTMP = hv_fetch(pData, sKey, iKeyLen, 1);
 	if (pTMP == NULL)
 	{
-		croak("StorePair: Impossible happened: root value is not an HASH");
+		croak("StoreFile: Impossible happened: root value is not an HASH");
 		return;
 	}
 
@@ -199,7 +200,7 @@ static void StoreFile(HV * pData, SV * pKey, HV * pVal)
 	{
 		if (!SvROK(*pTMP) || !SvRV(*pTMP) || SvTYPE(SvRV(*pTMP)) != SVt_PVAV)
 		{
-			croak("StorePair: Impossible happened: value is not an ARRAY ref");
+			croak("StoreFile: Impossible happened: value is not an ARRAY ref");
 			return;
 		}
 
@@ -210,10 +211,12 @@ static void StoreFile(HV * pData, SV * pKey, HV * pVal)
 		AV * pAV = newAV();
 		av_push(pAV, *pTMP);
 		av_push(pAV, newRV_noinc((SV *)pVal));
+		SvREFCNT_dec(*pTMP);
 		*pTMP = newRV_noinc((SV*)pAV);
 	}
 	else
 	{
+		SvREFCNT_dec(*pTMP);
 		*pTMP = newRV_noinc((SV *)pVal);
 	}
 
@@ -225,6 +228,8 @@ static void StoreFile(HV * pData, SV * pKey, HV * pVal)
 static void MultipartParserParseHeader(Request                        * pRequest,
                                        struct MultipartParserContext  * pContext)
 {
+
+
 	STRLEN       iBufLen  = 0;
 #ifdef SvPV_const
 	const char * szBuffer = SvPV_const(pContext -> buffer, iBufLen);
@@ -494,7 +499,7 @@ void MultipartParserCommitSection(Request                        * pRequest,
 	/* Append buffer */
 	else if (pContext -> value_state == C_BODY_VALUE)
 	{
-		StorePair(pRequest -> arguments, pContext -> name, newSVsv(pContext -> buffer));
+		StorePair(pRequest -> arguments, SvPV_nolen(pContext -> name), newSVsv(pContext -> buffer));
 	}
 }
 
@@ -615,6 +620,7 @@ BOUNDARY_IN_SUFFIX1:
 					/* End of buffer? */
 					++szString;
 BOUNDARY_IN_SUFFIX2:
+
 					if (szString == szStringEnd)
 					{
 						szStringSave = MultipartParserHandleEndOfBuffer(pRequest, pContext, szStringSave, szBoundaryStart, C_BOUNDARY_IN_SUFFIX2);
@@ -642,6 +648,7 @@ BOUNDARY_IN_SUFFIX3:
 					return OK;
 				}
 BOUNDARY_IN_SUFFIX4:
+
 				/* CRLF after szBoundary, REQUIRED in all cases! */
 				if(*szString != '\n')
 				{
@@ -735,7 +742,6 @@ KEY_VALUE:
 #else
 						szHeaderName = SvPV(pContext -> buffer, iHeaderLen);
 #endif
-
 
 						/* Check "Content-Disposition" header */
 						if (StrFirstCaseStr(szHeaderName, C_CONTENT_DISPOSITION) != NULL)
@@ -873,10 +879,11 @@ return OK;
  */
 static int MultipartParserInit(Request * pRequest)
 {
+
 	struct MultipartParserContext  * pContext = (struct MultipartParserContext *)ap_palloc(pRequest -> request -> pool, sizeof(struct MultipartParserContext));
 
 	pContext -> boundary     = pRequest -> boundary;
-	pContext -> boundary_pos = pRequest -> boundary + 2;;
+	pContext -> boundary_pos = pRequest -> boundary + 2;
 	pContext -> state        = C_BOUNDARY_IN;
 	pContext -> value_state  = C_UNDEF;
 

@@ -233,7 +233,7 @@ static int UrlencodedParserParseChunk(Request     * pRequest,
 		/* No value given, store empty key */
 		if (*szString == '&' || *szString == ';')
 		{
-			StorePair(pRequest -> arguments, pContext -> key, pContext -> val);
+			StorePair(pRequest -> arguments, SvPV_nolen(pContext -> key), pContext -> val);
 			pContext -> key = newSVpvn("", 0);
 			pContext -> val = newSVpvn("", 0);
 			continue;
@@ -254,7 +254,7 @@ PARSE_VALUE:
 		/* Store pair if '&' symbol found */
 		if (*szString == '&' || *szString == ';')
 		{
-			StorePair(pRequest -> arguments, pContext -> key, pContext -> val);
+			StorePair(pRequest -> arguments, SvPV_nolen(pContext -> key), pContext -> val);
 			pContext -> key = newSVpvn("", 0);
 			pContext -> val = newSVpvn("", 0);
 		}
@@ -271,7 +271,8 @@ static int UrlencodedParserDone(Request  * pRequest)
 {
 	struct UrlencodedParserContext  * pContext = (struct UrlencodedParserContext *)(pRequest -> context);
 
-	StorePair(pRequest -> arguments, pContext -> key, pContext -> val);
+	StorePair(pRequest -> arguments, SvPV_nolen(pContext -> key), pContext -> val);
+
 
 return OK;
 }

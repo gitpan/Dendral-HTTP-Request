@@ -50,18 +50,29 @@ extern "C" {
 #include <httpd.h>
 
 #if (AP_SERVER_MAJORVERSION_NUMBER == 2)
-    #include "apr_strings.h"
-    #include "apr_uri.h"
-    #include "util_filter.h"
+	#include "apr_strings.h"
+	#include "apr_uri.h"
+	#include "util_filter.h"
 
-    #define ap_palloc    apr_palloc
-    #define ap_pstrdup   apr_pstrdup
-    #define ap_pstrndup  apr_pstrndup
-    #define ap_pstrcat   apr_pstrcat
-    #define ap_table_add apr_table_add
+	#define ap_palloc    apr_palloc
+	#define ap_pstrdup   apr_pstrdup
+	#define ap_pstrndup  apr_pstrndup
+	#define ap_pstrcat   apr_pstrcat
+	#define ap_table_add apr_table_add
+	#define ap_table_get apr_table_get
+	#define ap_table_do apr_table_do
 
+	#define ap_make_table apr_table_make
+
+    #define ap_pcalloc apr_pcalloc
+	
+	/* CleenUp */
+	#define ap_register_cleanup apr_pool_cleanup_register
+	#define ap_null_cleanup apr_pool_cleanup_null
+	
     #define ap_pfopen(pool, file, mode)  fopen((file), (mode))
     #define ap_pfclose(pool, file)       fclose(file)
+    
 #endif
 
 #define C_ESCAPE_BUFFER_LEN 8192
@@ -142,13 +153,12 @@ int ReadRequest(Request * pRequest);
 /*
  * Parse cookies foo=bar; baz=bar+baz/boo
  */
-void ParseCookies(const char  * szString,
-                  HV          * pHash);
+void ParseCookies(Request * pRequest, char  * szString);
 
 /*
- * Store Par
+ * Store Pair
  */
-void StorePair(HV * pData, SV * pKey, SV * pVal);
+void StorePair(HV * pData, const char * sKey, SV * pVal);
 
 #endif /* _REQUEST_STRUCT_H__ */
 /* End */

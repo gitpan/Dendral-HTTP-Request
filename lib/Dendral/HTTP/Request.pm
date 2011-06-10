@@ -18,7 +18,7 @@ require AutoLoader;
 
 );
 
-$VERSION = '0.0.1';
+$VERSION = '0.1.0';
 
 bootstrap Dendral::HTTP::Request $VERSION;
 
@@ -198,6 +198,18 @@ __END__;
 
     my $raw_post_data = $req -> raw();
 
+=head2 file - Get uploaded file(s) info by input name. 
+
+    my $file = $req -> file('upload_file');
+    my @files = $req -> file();
+
+    my $file_name      = $file -> {'file_name'};
+    my $tmp_name       = $file -> {'tmp_name'};
+    my $full_filename  = $file -> {'full_filename'};
+    my $filesize       = $file -> {'filesize'};
+    my $content_type   = $file -> {'content_type'};
+    my $content_tr_enc = $file -> {'content_transfer_encoding'};
+
 =head1 EXAMPLES
 
     See file examples/Mytest.pm
@@ -218,7 +230,7 @@ http://dendral.havoc.ru/    - for Russian speakers
 
 =head1 LICENSE
 
- Copyright (c) 2005 - 2010 CAS Dev Team
+ Copyright (c) 2005 - 2011 CAS Dev Team
  
  Redistribution and use in source and binary forms, with or without
  modification, are permitted provided that the following conditions

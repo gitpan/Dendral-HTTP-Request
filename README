@@ -1,4 +1,4 @@
-Dendral::HTTP::Request version 0.0.1
+Dendral::HTTP::Request version 0.1
 ====================================
 
 Dendral::HTTP::Request - Request object for Dendral framework
@@ -10,6 +10,9 @@ INSTALLATION
 To install this module type the following:
 
    perl Makefile.PL
+or perl Makefile.PL --apache-include=/path/to/apache/include/dir   
+or perl Makefile.PL --apache-include=/path/to/apache/include/dir --apr-include=/path/to/apr/include/dir
+   
    make
    make test
    make install

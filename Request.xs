@@ -42,30 +42,11 @@
     #endif
 #endif
 
+
+
+
 /* Apache 2.X */
 #if (AP_SERVER_MAJORVERSION_NUMBER == 2)
-
-/*
- * Iterate through headers
- */
-static void IterateHeaders(const apr_array_header_t  * aHeadersTable,
-                           HV                        * pHeaders)
-{
-	const int            iElements = aHeadersTable -> nelts;
-	apr_table_entry_t  * aElements = (apr_table_entry_t *)aHeadersTable -> elts;
-	int iI = 0;
-	for(; iI < iElements; ++iI)
-	{
-		char * szKey = aElements[iI].key;
-		char * szVal = aElements[iI].val;
-
-		// Nothing to do?
-		if (szKey != NULL && szVal != NULL && szVal[0] != '\0')
-		{
-			StorePair(pHeaders, newSVpv(szKey, 0), newSVpv(szVal, 0));
-		}
-	}
-}
 
 /*
  * Unlink uploaded files
@@ -84,53 +65,12 @@ static apr_status_t upload_cleanup(void *ptr)
 		if (szKey != NULL && *szKey != '\0') { unlink(szKey); }
 	}
 
-return APR_SUCCESS;
+	return APR_SUCCESS;
 }
 
-/*
- * Handle Apache 1.3.X request
- */
-static void HandleRequest(Request * pRequest)
-{
-	int iTMP;
-	/* Need for apache cleanup */
-	pRequest -> filelist = apr_table_make(pRequest -> request -> pool, DEFAULT_TABLE_NELTS);
-
-	/* Upload cleanup hook */
-	apr_pool_cleanup_register(pRequest -> request -> pool, pRequest, upload_cleanup, apr_pool_cleanup_null);
-
-	/* Parse request cookies */
-	ParseCookies(apr_table_get(pRequest -> request -> headers_in, "Cookie"), pRequest -> cookies);
-	/* Parse request headers */
-	IterateHeaders(apr_table_elts(pRequest -> request -> headers_in), pRequest -> headers);
-
-	/* Parse request arguments */
-	iTMP = ReadRequest(pRequest);
-	if (iTMP != OK && pRequest -> die_on_errors == 0)
-	{
-		croak("ERROR: Can't parse request arguments data");
-	}
-}
 
 /* Apache 1.3.X */
 #else
-
-/*
- * Iterate through headers
- */
-static int HeaderIterator(void        * req,
-                          const char  * key,
-                          const char  * value)
-{
-	HV * pData = (HV *)req;
-
-	// Nothing to do?
-	if (key == NULL || value == NULL || value[0] == '\0') { return 1; }
-
-	StorePair(pData, newSVpv(key, 0), newSVpv(value, 0));
-
-return 1;
-}
 
 /*
  * Unlink uploaded files
@@ -155,19 +95,44 @@ static void upload_cleanup(void *ptr)
 	ap_table_do(FilesIterator, NULL, pRequest -> filelist, NULL);
 }
 
+
+#endif
+
+
+/*
+ * Iterate through headers
+ */
+static int HeaderIterator(void        * req,
+                          const char  * key,
+                          const char  * value)
+{
+	HV * pData = (HV *)req;
+
+	// Nothing to do?
+	if (key == NULL || value == NULL || value[0] == '\0') { return 1; }
+
+	StorePair(pData, key, newSVpv(value, 0));
+
+return 1;
+}
+
+/*
+ * Handle Apache request
+ */
 static void HandleRequest(Request * pRequest)
 {
 	int iTMP;
 	/* Need for apache cleanup */
-	pRequest -> filelist  = ap_make_table(pRequest -> request -> pool, DEFAULT_TABLE_NELTS);
+	pRequest -> filelist = ap_make_table(pRequest -> request -> pool, DEFAULT_TABLE_NELTS);
+
+	/* Parse Headers */
+	ap_table_do(HeaderIterator, pRequest -> headers, pRequest -> request -> headers_in, NULL);
 
 	/* Upload cleanup hook */
 	ap_register_cleanup(pRequest -> request -> pool, pRequest, upload_cleanup, ap_null_cleanup);
 
 	/* Parse request cookies */
-	ParseCookies(ap_table_get(pRequest -> request -> headers_in, "Cookie"), pRequest -> cookies);
-	/* Parse request headers */
-	ap_table_do(HeaderIterator, pRequest -> headers, pRequest -> request -> headers_in, NULL);
+	ParseCookies(pRequest, (char*) ap_table_get(pRequest -> request -> headers_in, "Cookie"));
 
 	/* Parse request arguments */
 	iTMP = ReadRequest(pRequest);
@@ -176,9 +141,10 @@ static void HandleRequest(Request * pRequest)
 		croak("ERROR: Can't parse request arguments data");
 	}
 }
-#endif
 
 #define Apache request_rec
+
+//**************************** XS *********************************
 
 MODULE = Dendral::HTTP::Request		PACKAGE = Dendral::HTTP::Request
 
@@ -245,7 +211,7 @@ Request::new(r, ...)
 			{
 				pRequest -> tempfile_dir = ap_pstrndup(r -> pool, szValue, iValLen);
 				/* Always with trailing slash */
-				if(szValue[iValLen - 1] != '/') { ap_pstrcat(r -> pool, pRequest -> tempfile_dir, "/", NULL); }
+				if(szValue[iValLen - 1] != '/') { pRequest -> tempfile_dir = ap_pstrcat(r -> pool, pRequest -> tempfile_dir, "/", NULL); }
 			}
 		}
 		else if (strncasecmp("DIE_ON_ERRORS", szKey, iKeyLen) == 0)
@@ -677,8 +643,12 @@ DESTROY(pRequest)
     CODE:
 	/* warn("Dendral::HTTP::Request::DESTROY(0x%p)", pRequest); */
 	hv_undef(pRequest -> arguments);
+	SvREFCNT_dec(pRequest -> arguments);
 	hv_undef(pRequest -> cookies);
+	SvREFCNT_dec(pRequest -> cookies);
 	hv_undef(pRequest -> headers);
+	SvREFCNT_dec(pRequest -> headers);
 	hv_undef(pRequest -> files);
+	SvREFCNT_dec(pRequest -> files);
 	SvREFCNT_dec(pRequest -> raw_post);
 

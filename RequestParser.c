@@ -39,11 +39,8 @@
 /*
  * Store Par
  */
-void StorePair(HV * pData, SV * pKey, SV * pVal)
+void StorePair(HV * pData, const char * sKey, SV * pVal)
 {
-	STRLEN        iKeyLen = 0;
-	const char  * sKey    = NULL;
-
 	SV         ** pTMP    = NULL;
 	long          eType   = 0;
 
@@ -53,11 +50,9 @@ void StorePair(HV * pData, SV * pKey, SV * pVal)
 		return;
 	}
 
-	iKeyLen = 0;
-	sKey    = SvPV_const(pKey, iKeyLen);
 
 	/* Always create key => value pair */
-	pTMP = hv_fetch(pData, sKey, iKeyLen, 1);
+	pTMP = hv_fetch(pData, sKey, strlen(sKey), 1);
 	if (pTMP == NULL)
 	{
 		croak("StorePair: Impossible happened: root value is not an HASH");
@@ -84,7 +79,66 @@ void StorePair(HV * pData, SV * pKey, SV * pVal)
 	}
 	else
 	{
-		*pTMP = newSVsv(pVal);
+		SvREFCNT_dec(*pTMP);
+		*pTMP = pVal;
+	}
+
+	
+	
+}
+
+static void unescape_space(char* szString)
+{
+	register int x;
+	for(x=0;szString[x];x++) 
+	{
+		if(szString[x] == '+') szString[x] = ' ';
+	}
+}
+
+void ParseArguments(Request * pRequest, const char* szString)
+{
+	char *szKey;
+	char *szVal;
+
+	while(*szString && (szVal = ap_getword(pRequest -> request -> pool, (const char**) &szString, '&'))) 
+	{
+		szKey = ap_getword(pRequest -> request -> pool, (const char**) &szVal, '=');
+
+		ap_unescape_url(szKey);
+		unescape_space(szVal);
+		ap_unescape_url(szVal);
+
+		StorePair(pRequest -> arguments, szKey, newSVpv(szVal, 0));
+	}
+}
+
+
+/*
+ * Parse cookies foo=bar; baz=bar+baz/boo
+ */
+void ParseCookies(Request * pRequest, char * szString)
+{
+	const char *pair;
+
+	if(!szString) return;
+	
+
+	
+	while(*szString && (pair = ap_getword(pRequest -> request -> pool, (const char**) &szString, ';'))) 
+	{
+		const char *szKey, *szVal;
+		if(*szString == ' ') ++szString;
+		szKey = ap_getword(pRequest -> request -> pool, (const char**) &pair, '=');
+		
+		while(*pair && (szVal = ap_getword(pRequest -> request -> pool,(const char**) &pair, '&'))) 
+		{
+			ap_unescape_url((char*) szVal);
+
+			StorePair(pRequest -> cookies, szKey, newSVpv(szVal, 0));
+
+
+		}
 	}
 }
 
@@ -98,8 +152,10 @@ static const char * StrCaseStr(const char * sX, const char * sY)
 		++sY; ++sX;
 		if (*sY == '\0') { return sX; }
 	}
-return NULL;
+	
+	return NULL;
 }
+
 
 /* Apache 2.X */
 #if (AP_SERVER_MAJORVERSION_NUMBER == 2)
@@ -166,84 +222,10 @@ static int ParsePOST(Request       * pRequest,
 		return HTTP_REQUEST_ENTITY_TOO_LARGE;
 	}
 
-return OK;
+	return OK;
 }
 
-//
-// Read request
-//
-int ReadRequest(Request * pRequest)
-{
-	int iRC = OK;
 
-	static const char * szBoundaryPrefix = "\r\n--";
-
-	// Parse request
-	apr_uri_t oURI = pRequest -> request -> parsed_uri;
-	if (oURI.query != NULL && *oURI.query != '\0')
-	{
-		// Parse request
-		UrlencodedParser.ParseInit(pRequest);
-		UrlencodedParser.ParseChunk(pRequest, oURI.query, oURI.query + strlen(oURI.query));
-		UrlencodedParser.ParseDone(pRequest);
-	}
-
-	// POST
-	if (pRequest -> request -> method_number == M_POST)
-	{
-		// Get content type
-		const char * szContentType = apr_table_get(pRequest -> request -> headers_in, "Content-Type");
-
-		// foo=bar&baz=boo
-		const char * szFoundContentType = NULL;
-		char       *  szBoundary         = NULL;
-
-		// URL-encoded data
-		if      ((szFoundContentType = StrCaseStr(szContentType, DEFAULT_ENCTYPE))   != NULL)
-		{
-			UrlencodedParser.ParseInit(pRequest);
-			iRC = ParsePOST(pRequest, &UrlencodedParser);
-			UrlencodedParser.ParseDone(pRequest);
-		}
-		// Multipart message
-		else if ((szFoundContentType = StrCaseStr(szContentType, MULTIPART_ENCTYPE)) != NULL)
-		{
-			// Get boundary
-			const char * szTMPBoundary = StrCaseStr(szFoundContentType, "; boundary=");
-			if (szTMPBoundary == NULL)
-			{
-				warn("Dendral::HTTP::Request: Read POST(" MULTIPART_ENCTYPE "), invalid boundary");
-				return HTTP_INTERNAL_SERVER_ERROR;
-			}
-			// New boundary
-			szBoundary = (char *)apr_pcalloc(pRequest -> request -> pool, strlen(szTMPBoundary) + 5);
-			strcpy(szBoundary, szBoundaryPrefix);
-			stpcpy(szBoundary + 4, szTMPBoundary);
-
-			MultipartParser.ParseInit(pRequest);
-			iRC = ParsePOST(pRequest, &MultipartParser);
-			MultipartParser.ParseDone(pRequest);
-		}
-/*
-		/ * XML POST data, TBD * /
-		else if ((szFoundContentType = StrCaseStr(szContentType, TEXT_XML_ENCTYPE)) != NULL)
-		{
-			XMLParser.ParseInit(pRequest);
-			iRC = ParsePOST(pRequest, &XMLParser);
-			XMLParser.ParseDone(pRequest);
-		}
-*/
-		/* Default parser */
-		else
-		{
-			DefaultParser.ParseInit(pRequest);
-			iRC = ParsePOST(pRequest, &DefaultParser);
-			DefaultParser.ParseDone(pRequest);
-		}
-	}
-
-return iRC;
-}
 
 /* Apache 1.3.X */
 #else
@@ -289,68 +271,70 @@ static int ParsePOST(Request       * pRequest,
 		return HTTP_REQUEST_ENTITY_TOO_LARGE;
 	}
 
-return iRC;
+	return iRC;
 }
 
-/*
- * Read request
- */
+
+#endif
+
+
+
+
+//
+// Read request
+//
 int ReadRequest(Request * pRequest)
 {
 	int iRC = OK;
-	static const char * szBoundaryPrefix = "\r\n--";
-	/* GET, HEAD and POST */
-	/* URI components */
-	uri_components    oURI;
 
-	/* Parse URI Components */
-	ap_parse_uri_components(pRequest -> request -> pool, pRequest -> request -> unparsed_uri, &oURI);
-	/* Parse request */
-	if (oURI.query != NULL && *oURI.query != '\0')
+	static const char * szBoundaryPrefix = "\r\n--";
+
+	// GET
+	if (pRequest -> request -> method_number == M_GET && pRequest -> request -> args)
 	{
-		/* Parse request */
-		UrlencodedParser.ParseInit(pRequest);
-		UrlencodedParser.ParseChunk(pRequest, oURI.query, oURI.query + strlen(oURI.query));
-		UrlencodedParser.ParseDone(pRequest);
+		ParseArguments(pRequest, pRequest -> request -> args);
 	}
 
-	/* POST */
+	// POST
 	if (pRequest -> request -> method_number == M_POST)
 	{
-		const char  * szContentType      = NULL;
-		const char  * szFoundContentType = NULL;
-		char        * szBoundary         = NULL;
 
+#if (AP_SERVER_MAJORVERSION_NUMBER != 2)
 		/* Got Error? */
 		if (ap_setup_client_block(pRequest -> request, REQUEST_CHUNKED_ERROR) != OK) { return -1; }
+#endif
 
-		/* Get content type */
-		szContentType = ap_table_get(pRequest -> request -> headers_in, "Content-Type");
+		// Get content type
+		const char * szContentType = ap_table_get(pRequest -> request -> headers_in, "Content-Type");
 
-		/* URL-encoded data */
-		if ((szFoundContentType = StrCaseStr(szContentType, DEFAULT_ENCTYPE))   != NULL)
+		// foo=bar&baz=boo
+		const char * szFoundContentType = NULL;
+		char       *  szBoundary         = NULL;
+
+		// URL-encoded data
+		if ((szFoundContentType = StrCaseStr(szContentType, DEFAULT_ENCTYPE)) != NULL)
 		{
-			/* Parse request */
 			UrlencodedParser.ParseInit(pRequest);
 			iRC = ParsePOST(pRequest, &UrlencodedParser);
 			UrlencodedParser.ParseDone(pRequest);
 		}
-		/* Multipart message? */
+		// Multipart message
 		else if ((szFoundContentType = StrCaseStr(szContentType, MULTIPART_ENCTYPE)) != NULL)
 		{
-			/* Get boundary */
-			const char  * szTMPBoundary = StrCaseStr(szFoundContentType, "; boundary=");
+			// Get boundary
+			const char * szTMPBoundary = StrCaseStr(szFoundContentType, "; boundary=");
 			if (szTMPBoundary == NULL)
 			{
 				warn("Dendral::HTTP::Request: Read POST(" MULTIPART_ENCTYPE "), invalid boundary");
 				return HTTP_INTERNAL_SERVER_ERROR;
 			}
-			/* New boundary */
+			// New boundary
 			szBoundary = (char *)ap_pcalloc(pRequest -> request -> pool, strlen(szTMPBoundary) + 5);
 			strcpy(szBoundary, szBoundaryPrefix);
-			strcpy(szBoundary + 4, szTMPBoundary);
-			pRequest -> boundary = szBoundary;
+			stpcpy(szBoundary + 4, szTMPBoundary);
 
+			pRequest -> boundary = szBoundary;
+		
 			MultipartParser.ParseInit(pRequest);
 			iRC = ParsePOST(pRequest, &MultipartParser);
 			MultipartParser.ParseDone(pRequest);
@@ -373,146 +357,7 @@ int ReadRequest(Request * pRequest)
 		}
 	}
 
-return iRC;
-}
-#endif
-/*
- * Unescape cookie
- */
-static const char * UnescapeCookie(const char    * szString,
-                                   char            chDelimiter,
-                                   SV            * pData,
-                                   char          * sBuffer)
-{
-	unsigned int  iBufferPointer = 0;
-	unsigned char ucSymbol       = 0;
-	unsigned char ucTMP          = 0;
-
-	/* Iterate through buffer */
-	while (*szString != '\0' && *szString != chDelimiter && *szString != ' ' && *szString != ';')
-	{
-		/* Buffer overflow */
-		if (iBufferPointer == C_ESCAPE_BUFFER_LEN)
-		{
-			sv_catpvn(pData, sBuffer, iBufferPointer);
-			iBufferPointer = 0;
-		}
-
-		/* Change '+' to space */
-		if      (*szString == '+') { sBuffer[iBufferPointer++] = ' '; }
-		/* Store all unescaped symbols */
-		else if (*szString != '%') { sBuffer[iBufferPointer++] = *szString; }
-		else
-		{
-			++szString;
-
-			ucSymbol = *szString;
-			/* Unescape correct sequence */
-			if      (ucSymbol >= 'A' && ucSymbol <= 'F') { ucTMP = ((ucSymbol - 'A' + 10) << 4); }
-			else if (ucSymbol >= 'a' && ucSymbol <= 'f') { ucTMP = ((ucSymbol - 'a' + 10) << 4); }
-			else if (ucSymbol >= '0' && ucSymbol <= '9') { ucTMP =  (ucSymbol - '0')      << 4;  }
-			/* Store '%' symbol to the buffer */
-			else
-			{
-				sBuffer[iBufferPointer++] = '%';
-				continue;
-			}
-
-			++szString;
-			/* Unescape correct sequence */
-			if      (*szString >= 'A' && *szString <= 'F') { ucTMP += *szString - 'A' + 10; }
-			else if (*szString >= 'a' && *szString <= 'f') { ucTMP += *szString - 'a' + 10; }
-			else if (*szString >= '0' && *szString <= '9') { ucTMP += *szString - '0';      }
-			/* Store '%' and next symbol to the buffer */
-			else
-			{
-				sBuffer[iBufferPointer++] = '%';
-				sBuffer[iBufferPointer++] = ucSymbol;
-				continue;
-			}
-
-			/* Okay, symbol successfully unescaped */
-			sBuffer[iBufferPointer++] = (unsigned char)ucTMP;
-		}
-
-		++szString;
-	}
-
-	/* Append buffer to result */
-	sv_catpvn(pData, sBuffer, iBufferPointer);
-
-return szString;
-}
-
-/*
- * Parse cookies foo=bar; baz=bar+baz/boo
- */
-void ParseCookies(const char  * szString,
-                  HV          * pHash)
-{
-	if (szString != NULL)
-	{
-		char sBuffer[C_ESCAPE_BUFFER_LEN + 4];
-
-		SV * pKey = newSVpvn("", 0);
-		SV * pVal = newSVpvn("", 0);
-		for(;;)
-		{
-			/* Skip spaces */
-			while (szString != '\0' && *szString == ' ') { ++szString; }
-			/* Return if EOL found */
-			if (*szString == '\0') { return; }
-
-			/* Parse key */
-			szString = UnescapeCookie(szString, '=', pKey, sBuffer);
-
-			/* Skip spaces */
-			while (szString != '\0' && *szString == ' ') { ++szString; }
-			/* Store key and return */
-			if (*szString == '\0')
-			{
-				StorePair(pHash, pKey, pVal);
-				return;
-			}
-
-			/* Check '=' */
-			if (*szString != '=') { return; }
-
-			++szString;
-
-			/* Skip spaces */
-			while (szString != '\0' && *szString == ' ') { ++szString; }
-			/* Return if EOL found */
-			if (*szString == '\0')
-			{
-				StorePair(pHash, pKey, pVal);
-				return;
-			}
-
-			/* Parse value */
-			szString = UnescapeCookie(szString, ';', pVal, sBuffer);
-
-			/* Skip spaces */
-			while (szString != '\0' && *szString == ' ') { ++szString; }
-
-			/* Store key and return */
-			if (*szString == '\0')
-			{
-				StorePair(pHash, pKey, pVal);
-				return;
-			}
-
-			/* check ';' */
-			if (*szString == ';')
-			{
-				StorePair(pHash, pKey, pVal);
-			}
-			++szString;
-
-			pKey = newSVpvn("", 0);
-			pVal = newSVpvn("", 0);
-		}
-	}
+	return iRC;
 }
 
 /* End. */
