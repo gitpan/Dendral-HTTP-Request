@@ -142,6 +142,8 @@ static void HandleRequest(Request * pRequest)
 	}
 }
 
+
+
 #define Apache request_rec
 
 //**************************** XS *********************************
@@ -168,6 +170,9 @@ Request::new(r, ...)
 	pRequest -> max_file_size = -1;
 	pRequest -> tempfile_dir  = ap_pstrdup(r -> pool, "/tmp/");
 	pRequest -> die_on_errors = -1;
+	pRequest -> file_callback = NULL;
+	pRequest -> filechunk_callback = NULL;
+	pRequest -> datachunk_callback = NULL;
 
 	for (iI = 2; iI < items; iI+=2)
 	{
@@ -180,6 +185,8 @@ Request::new(r, ...)
 		char * szKey   = SvPV(ST(iI), iKeyLen);
 		char * szValue = SvPV(ST(iI + 1), iValLen);
 #endif
+		SV * Value = ST(iI + 1);
+
 		if (strncasecmp("POST_MAX", szKey, iKeyLen) == 0 ||
 		    strncasecmp("MAX_POST", szKey, iKeyLen) == 0)
 		{
@@ -217,6 +224,25 @@ Request::new(r, ...)
 		else if (strncasecmp("DIE_ON_ERRORS", szKey, iKeyLen) == 0)
 		{
 			pRequest -> die_on_errors = 0;
+		}
+		else if (strncasecmp("RAW_POST", szKey, iKeyLen) == 0)
+		{
+			if SvTRUE(Value) pRequest -> use_raw_post = 1;
+		}
+		else if (strncasecmp("DATACHUNK_CALLBACK", szKey, iKeyLen) == 0)
+		{
+			if (Value && SvROK(Value) && SvTYPE(SvRV(Value)) == SVt_PVCV) 
+				pRequest -> datachunk_callback = Value;
+		}
+		else if (strncasecmp("FILECHUNK_CALLBACK", szKey, iKeyLen) == 0)
+		{
+			if (Value && SvROK(Value) && SvTYPE(SvRV(Value)) == SVt_PVCV) 
+				pRequest -> filechunk_callback = Value;
+		}
+		else if (strncasecmp("FILE_CALLBACK", szKey, iKeyLen) == 0)
+		{
+			if (Value && SvROK(Value) && SvTYPE(SvRV(Value)) == SVt_PVCV) 
+				pRequest -> file_callback = Value; 
 		}
 		else
 		{
@@ -498,7 +524,7 @@ file(pRequest, sKey = NULL)
 						for (iPos = 0; iPos < iArraySize; ++iPos)
 						{
 							pTMP = av_fetch(pAV, iPos, 0);
-							ST(iPos) = sv_mortalcopy(*pTMP);
+							ST(iPos) = SvREFCNT_inc(*pTMP);
 						}
 						XSRETURN(iArraySize);
 					}
@@ -507,7 +533,7 @@ file(pRequest, sKey = NULL)
 		}
 		else
 		{
-			RETVAL = sv_mortalcopy(*pTMP);
+			RETVAL = SvREFCNT_inc(*pTMP);
 		}
 	}
     OUTPUT:
@@ -517,7 +543,7 @@ SV *
 raw(pRequest)
 	Request  * pRequest
     CODE:
-	RETVAL = sv_mortalcopy(pRequest -> raw_post);
+	RETVAL = SvREFCNT_inc(pRequest -> raw_post);
     OUTPUT:
 	RETVAL
 
@@ -571,6 +597,42 @@ unparsed_uri(pRequest)
     CODE:
 	if (pRequest -> request -> unparsed_uri == NULL) { XSRETURN_UNDEF; }
 	RETVAL = newSVpv(pRequest -> request -> unparsed_uri, 0);
+    OUTPUT:
+	RETVAL
+
+SV *
+get_self_url(pRequest, szHeaderName = NULL)
+	Request  * pRequest
+	char     * szHeaderName
+    PREINIT:
+	char * sScheme;
+	char * sUrl;
+    CODE:
+	if (!szHeaderName)
+	{
+		sScheme = ap_http_method(pRequest -> request);
+	}
+	else
+	{
+		SV ** pTMP = hv_fetch(pRequest -> headers, szHeaderName, strlen(szHeaderName), 0);
+		if (pTMP == NULL) { XSRETURN_UNDEF; }
+		sScheme = SvPV_nolen(*pTMP);
+	}
+
+	unsigned iPort = ap_get_server_port(pRequest -> request);
+	const char *sHost = ap_get_server_name(pRequest -> request);
+	char *sUri = pRequest -> request -> unparsed_uri;
+	
+	if (ap_is_default_port(iPort, pRequest -> request)) 
+	{
+		sUrl = ap_pstrcat(pRequest -> request -> pool, sScheme, "://", sHost, sUri, NULL);
+	}
+	else
+	{
+		sUrl = ap_psprintf(pRequest -> request -> pool, "%s://%s:%u%s", sScheme, sHost, iPort, sUri);
+	}
+
+	RETVAL = newSVpv(sUrl, 0);
     OUTPUT:
 	RETVAL
 

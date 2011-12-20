@@ -48,6 +48,7 @@ extern "C" {
 #endif
 
 #include <httpd.h>
+#include <http_core.h>
 
 #if (AP_SERVER_MAJORVERSION_NUMBER == 2)
 	#include "apr_strings.h"
@@ -60,19 +61,22 @@ extern "C" {
 	#define ap_pstrcat   apr_pstrcat
 	#define ap_table_add apr_table_add
 	#define ap_table_get apr_table_get
-	#define ap_table_do apr_table_do
+	#define ap_table_do  apr_table_do
+	#define ap_psprintf  apr_psprintf
 
 	#define ap_make_table apr_table_make
 
-    #define ap_pcalloc apr_pcalloc
+	#define ap_pcalloc apr_pcalloc
 	
 	/* CleenUp */
 	#define ap_register_cleanup apr_pool_cleanup_register
 	#define ap_null_cleanup apr_pool_cleanup_null
 	
-    #define ap_pfopen(pool, file, mode)  fopen((file), (mode))
-    #define ap_pfclose(pool, file)       fclose(file)
-    
+	#define ap_pfopen(pool, file, mode)  fopen((file), (mode))
+	#define ap_pfclose(pool, file)       fclose(file)
+
+	#define ap_http_method ap_http_scheme
+
 #endif
 
 #define C_ESCAPE_BUFFER_LEN 8192
@@ -104,6 +108,8 @@ typedef struct RequestStruct
 #endif
 	/* Die on errors?            */
 	int             die_on_errors;
+	/* Collect raw post?         */
+	int             use_raw_post;
 
 	/* Multipart boundary        */
 	const char    * boundary;
@@ -121,6 +127,12 @@ typedef struct RequestStruct
 	HV            * files;
 	/* Raw request               */
 	SV            * raw_post;
+	/* Data chunk Callback           */
+	SV            * datachunk_callback;
+	/* RFC1867 File chunk Callback */
+	SV            * filechunk_callback;
+	/* RFC1867 File Callback         */
+	SV            * file_callback;
 
 } Request;
 
@@ -159,6 +171,29 @@ void ParseCookies(Request * pRequest, char  * szString);
  * Store Pair
  */
 void StorePair(HV * pData, const char * sKey, SV * pVal);
+
+/*
+ * Handle File Chunk
+ */
+void HandleFileChunkCallback(Request    * pRequest, 
+                             const char * vChunk, 
+                             unsigned     iDataSize, 
+                             SV         * Name,
+                             long long    iFileSize, 
+                             SV         * FullFileName, 
+                             SV         * FileName,
+                             SV         * TempName
+                            );
+
+/*
+ * Handle File
+ */
+void HandleFileCallback(Request * pRequest,
+                        SV      * pName,
+                        SV      * pFullFileName, 
+                        SV      * pFileName,
+                        SV      * pTempName
+                       );
 
 #endif /* _REQUEST_STRUCT_H__ */
 /* End */

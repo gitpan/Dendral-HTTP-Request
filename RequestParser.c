@@ -36,6 +36,80 @@
 
 #include "RequestStruct.h"
 
+
+/* Handle DataChunk Callback */
+void HandleDataChunkCallback(Request * pRequest, const char * vChunk, unsigned iDataSize)
+{
+	if (!pRequest -> datachunk_callback) return;
+
+	dSP;
+	
+	PUSHMARK(sp);
+	
+	XPUSHs(sv_2mortal(newSVpv(vChunk, iDataSize)));
+	XPUSHs(sv_2mortal(newSViv(iDataSize)));
+
+	PUTBACK;
+
+	call_sv(pRequest -> datachunk_callback, G_DISCARD);
+}
+
+
+/* Handle File Callback */
+void HandleFileCallback(Request * pRequest,
+                SV      * pName,
+                SV      * pFullFileName, 
+                SV      * pFileName,
+                SV      * pTempName)
+{
+	if (!pRequest -> file_callback) return;
+
+	dSP;
+	
+	PUSHMARK(sp);
+	
+	XPUSHs(sv_mortalcopy(pName));
+	XPUSHs(sv_mortalcopy(pFullFileName));
+	XPUSHs(sv_mortalcopy(pFileName));
+	XPUSHs(sv_mortalcopy(pTempName));
+
+	PUTBACK;
+
+	call_sv(pRequest -> file_callback, G_DISCARD);
+}
+
+/* Handle FileChunk Callback */
+void HandleFileChunkCallback(Request    * pRequest, 
+                             const char * vChunk, 
+                             unsigned     iDataSize, 
+                             SV         * pName,
+                             long long    iFileSize, 
+                             SV         * pFullFileName, 
+                             SV         * pFileName,
+                             SV         * pTempName
+                            )
+
+{
+	if (!pRequest -> filechunk_callback) return;
+
+	dSP;
+	
+	PUSHMARK(sp);
+	
+	XPUSHs(sv_2mortal(newSVpv(vChunk, iDataSize)));
+	XPUSHs(sv_2mortal(newSViv(iDataSize)));
+	XPUSHs(sv_mortalcopy(pName));
+	XPUSHs(sv_2mortal(newSViv(iFileSize)));
+	XPUSHs(sv_mortalcopy(pFullFileName));
+	XPUSHs(sv_mortalcopy(pFileName));
+	XPUSHs(sv_mortalcopy(pTempName));
+
+	PUTBACK;
+
+	call_sv(pRequest -> filechunk_callback, G_DISCARD);
+}
+
+
 /*
  * Store Par
  */
@@ -87,32 +161,6 @@ void StorePair(HV * pData, const char * sKey, SV * pVal)
 	
 }
 
-static void unescape_space(char* szString)
-{
-	register int x;
-	for(x=0;szString[x];x++) 
-	{
-		if(szString[x] == '+') szString[x] = ' ';
-	}
-}
-
-void ParseArguments(Request * pRequest, const char* szString)
-{
-	char *szKey;
-	char *szVal;
-
-	while(*szString && (szVal = ap_getword(pRequest -> request -> pool, (const char**) &szString, '&'))) 
-	{
-		szKey = ap_getword(pRequest -> request -> pool, (const char**) &szVal, '=');
-
-		ap_unescape_url(szKey);
-		unescape_space(szVal);
-		ap_unescape_url(szVal);
-
-		StorePair(pRequest -> arguments, szKey, newSVpv(szVal, 0));
-	}
-}
-
 
 /*
  * Parse cookies foo=bar; baz=bar+baz/boo
@@ -122,8 +170,6 @@ void ParseCookies(Request * pRequest, char * szString)
 	const char *pair;
 
 	if(!szString) return;
-	
-
 	
 	while(*szString && (pair = ap_getword(pRequest -> request -> pool, (const char**) &szString, ';'))) 
 	{
@@ -136,8 +182,6 @@ void ParseCookies(Request * pRequest, char * szString)
 			ap_unescape_url((char*) szVal);
 
 			StorePair(pRequest -> cookies, szKey, newSVpv(szVal, 0));
-
-
 		}
 	}
 }
@@ -204,8 +248,15 @@ static int ParsePOST(Request       * pRequest,
 			if (pRequest -> max_post_size != -1 && iReadBytes >= pRequest -> max_post_size) { iCanRead = -1; }
 
 			// Process data
-			if (iCanRead == 0) { pRequestParser -> ParseChunk(pRequest, pData, pData + iDataSize); }
+			if (iCanRead == 0) 
+			{ 
+				HandleDataChunkCallback(pRequest, pData, iDataSize);
+				
+				pRequestParser -> ParseChunk(pRequest, pData, pData + iDataSize); 
 
+				if (pRequest -> use_raw_post) 
+					sv_catpvn(pRequest -> raw_post, pData, iDataSize);
+			}
 			// Read bytes
 			iReadBytes += iDataSize;
 
@@ -290,9 +341,13 @@ int ReadRequest(Request * pRequest)
 	static const char * szBoundaryPrefix = "\r\n--";
 
 	// GET
-	if (pRequest -> request -> method_number == M_GET && pRequest -> request -> args)
+	char *uri = pRequest -> request -> args;
+	
+	if (pRequest -> request -> method_number == M_GET && uri)
 	{
-		ParseArguments(pRequest, pRequest -> request -> args);
+		UrlencodedParser.ParseInit(pRequest);
+		UrlencodedParser.ParseChunk(pRequest, uri, uri + strlen(uri));
+		UrlencodedParser.ParseDone(pRequest);
 	}
 
 	// POST
@@ -309,51 +364,54 @@ int ReadRequest(Request * pRequest)
 
 		// foo=bar&baz=boo
 		const char * szFoundContentType = NULL;
-		char       *  szBoundary         = NULL;
+		char       *  szBoundary        = NULL;
 
-		// URL-encoded data
-		if ((szFoundContentType = StrCaseStr(szContentType, DEFAULT_ENCTYPE)) != NULL)
+		if (szContentType)
 		{
-			UrlencodedParser.ParseInit(pRequest);
-			iRC = ParsePOST(pRequest, &UrlencodedParser);
-			UrlencodedParser.ParseDone(pRequest);
-		}
-		// Multipart message
-		else if ((szFoundContentType = StrCaseStr(szContentType, MULTIPART_ENCTYPE)) != NULL)
-		{
-			// Get boundary
-			const char * szTMPBoundary = StrCaseStr(szFoundContentType, "; boundary=");
-			if (szTMPBoundary == NULL)
+			// URL-encoded data
+			if ((szFoundContentType = StrCaseStr(szContentType, DEFAULT_ENCTYPE)) != NULL)
 			{
-				warn("Dendral::HTTP::Request: Read POST(" MULTIPART_ENCTYPE "), invalid boundary");
-				return HTTP_INTERNAL_SERVER_ERROR;
+				UrlencodedParser.ParseInit(pRequest);
+				iRC = ParsePOST(pRequest, &UrlencodedParser);
+				UrlencodedParser.ParseDone(pRequest);
 			}
-			// New boundary
-			szBoundary = (char *)ap_pcalloc(pRequest -> request -> pool, strlen(szTMPBoundary) + 5);
-			strcpy(szBoundary, szBoundaryPrefix);
-			stpcpy(szBoundary + 4, szTMPBoundary);
+			// Multipart message
+			else if ((szFoundContentType = StrCaseStr(szContentType, MULTIPART_ENCTYPE)) != NULL)
+			{
+				// Get boundary
+				const char * szTMPBoundary = StrCaseStr(szFoundContentType, "; boundary=");
+				if (szTMPBoundary == NULL)
+				{
+					warn("Dendral::HTTP::Request: Read POST(" MULTIPART_ENCTYPE "), invalid boundary");
+					return HTTP_INTERNAL_SERVER_ERROR;
+				}
+				// New boundary
+				szBoundary = (char *)ap_pcalloc(pRequest -> request -> pool, strlen(szTMPBoundary) + 5);
+				strcpy(szBoundary, szBoundaryPrefix);
+				stpcpy(szBoundary + 4, szTMPBoundary);
 
-			pRequest -> boundary = szBoundary;
-		
-			MultipartParser.ParseInit(pRequest);
-			iRC = ParsePOST(pRequest, &MultipartParser);
-			MultipartParser.ParseDone(pRequest);
-		}
+				pRequest -> boundary = szBoundary;
+			
+				MultipartParser.ParseInit(pRequest);
+				iRC = ParsePOST(pRequest, &MultipartParser);
+				MultipartParser.ParseDone(pRequest);
+			}
 /*
-		/ * XML POST data, TBD * /
-		else if ((szFoundContentType = StrCaseStr(szContentType, TEXT_XML_ENCTYPE)) != NULL)
-		{
-			XMLParser.ParseInit(pRequest);
-			iRC = ParsePOST(pRequest, &XMLParser);
-			XMLParser.ParseDone(pRequest);
-		}
+			/ * XML POST data, TBD * /
+			else if ((szFoundContentType = StrCaseStr(szContentType, TEXT_XML_ENCTYPE)) != NULL)
+			{
+				XMLParser.ParseInit(pRequest);
+				iRC = ParsePOST(pRequest, &XMLParser);
+				XMLParser.ParseDone(pRequest);
+			}
+			//Default parser
+			else
+			{
+				DefaultParser.ParseInit(pRequest);
+				iRC = ParsePOST(pRequest, &DefaultParser);
+				DefaultParser.ParseDone(pRequest);
+			}
 */
-		/* Default parser */
-		else
-		{
-			DefaultParser.ParseInit(pRequest);
-			iRC = ParsePOST(pRequest, &DefaultParser);
-			DefaultParser.ParseDone(pRequest);
 		}
 	}
 

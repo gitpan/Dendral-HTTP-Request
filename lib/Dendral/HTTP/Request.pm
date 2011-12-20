@@ -18,7 +18,7 @@ require AutoLoader;
 
 );
 
-$VERSION = '0.1.0';
+$VERSION = '0.1.5';
 
 bootstrap Dendral::HTTP::Request $VERSION;
 
@@ -100,7 +100,8 @@ __END__;
     my $req = new Dendral::HTTP::Request($r, POST_MAX      => -1,
                                              MAX_FILES     => -1,
                                              MAX_FILE_SIZE => -1,
-                                             TMP_DIR       => '/tmp');
+                                             TMP_DIR       => '/tmp',
+                                             RAW_POST      => 0);
 
     MAX_POST, POST_MAX - Limit of POST request size, bytes; -1 means no limit, 0 - POST method is disabled.
 
@@ -111,6 +112,8 @@ __END__;
     MAX_FILE_SIZE - Uploaded file size limit, bytes; -1 means no limit, 0 - uploading of files is disabled.
 
     DIE_ON_ERRORS - If set, module should die if any error occured.
+
+    RAW_POST - If set, object will be collect raw data.
 
 =head2 param - Get request parameter(s)
 
@@ -197,6 +200,7 @@ __END__;
 =head2 raw - Get raw request data
 
     my $raw_post_data = $req -> raw();
+    # you must specified RAW_POST parameter in constructor
 
 =head2 file - Get uploaded file(s) info by input name. 
 
@@ -210,6 +214,11 @@ __END__;
     my $content_type   = $file -> {'content_type'};
     my $content_tr_enc = $file -> {'content_transfer_encoding'};
 
+head2 get_self_url - return current url
+
+    my $url = $req -> get_self_url();
+    my $hurl = $req -> get_self_url('X-Scheme');
+    
 =head1 EXAMPLES
 
     See file examples/Mytest.pm

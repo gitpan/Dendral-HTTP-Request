@@ -355,6 +355,10 @@ static void MultipartParserParseHeader(Request                        * pRequest
 		++szData;
 		if (szData == szDataEnd) { break; }
 	}
+	
+	
+	HandleFileCallback(pRequest, pContext -> name, pContext -> full_filename, pContext -> file_name, pContext -> tmp_name);
+
 /*
 fprintf(stderr, "NAME          `%s`\n", oFile.name.c_str());
 fprintf(stderr, "FULL FILENAME `%s`\n", oFile.full_filename.c_str());
@@ -393,9 +397,19 @@ static const char * MultipartParserHandleEndOfBuffer(Request                    
 				if (pContext -> file != NULL)
 				{
 					pContext -> file_size += iBufSize;
+
 					/* Don't write data if file size is greater than pRequest -> max_file_size */
 					if (!(pRequest -> max_file_size != -1 && pContext -> file_size >= pRequest -> max_file_size))
 					{
+						HandleFileChunkCallback(pRequest, 
+					                            szStringSave, 
+					                            iBufSize, 
+					                            pContext -> name, 
+					                            pContext -> file_size, 
+					                            pContext -> full_filename, 
+					                            pContext -> file_name, 
+					                            pContext -> tmp_name);
+
 						iHandleBytes = fwrite(pContext -> boundary, 1, iBufSize, pContext -> file);
 					}
 				}
@@ -406,13 +420,24 @@ static const char * MultipartParserHandleEndOfBuffer(Request                    
 			if (pContext -> file != NULL && iBufSize != 0)
 			{
 				pContext -> file_size += iBufSize;
+
 				/* Don't write data if file size is greater than pRequest -> max_file_size */
 				if (!(pRequest -> max_file_size != -1 && pContext -> file_size >= pRequest -> max_file_size))
 				{
+					HandleFileChunkCallback(pRequest, 
+					                        szStringSave, 
+					                        iBufSize, 
+					                        pContext -> name, 
+					                        pContext -> file_size, 
+					                        pContext -> full_filename, 
+					                        pContext -> file_name, 
+					                        pContext -> tmp_name);
+					                
 					iHandleBytes = fwrite(szStringSave, 1, iBufSize, pContext -> file);
 				}
 			}
 		}
+
 		/* Append buffer */
 		else if (pContext -> value_state == C_BODY_VALUE)
 		{
@@ -569,10 +594,12 @@ static int MultipartParserParseChunk(Request     * pRequest,
 	if (pContext -> state == C_KEY_PRE_VALUE) { goto KEY_PRE_VALUE; }
 	if (pContext -> state == C_KEY_VALUE)     { goto KEY_VALUE;     }
 
+
 	for(;;)
 	{
 		/* Check szBoundary */
 		pContext -> boundary_pos = pContext -> boundary;
+
 		/* Store state */
 		pContext -> prev_state   = pContext -> state;
 
@@ -588,6 +615,7 @@ BOUNDARY_IN:
 			/* End of szBoundary found */
 			if (*pContext -> boundary_pos == '\0')
 			{
+
 				pContext -> prev_block_boundary = NULL;
 
 				/* End of buffer */
@@ -689,15 +717,20 @@ BOUNDARY_IN_SUFFIX4:
 			/* Boundary not found */
 			if (*pContext -> boundary_pos != *szString)
 			{
+				if (pContext -> boundary_pos == pContext -> boundary) ++szString;
+
 				pContext -> state        = pContext -> prev_state;
 				pContext -> boundary_pos = pContext -> boundary;
+				
+				
 				break;
+				
 			}
 
 			/* Next position */
 			++szString;
 			++pContext -> boundary_pos;
-
+			
 			/* End of buffer, write data */
 			if (szString == szStringEnd)
 			{
@@ -864,12 +897,13 @@ HEADER_LF2:
 		}
 
 		/* End of string? */
-		++szString;
+		//++szString;
 		if (szString == szStringEnd)
 		{
 			szStringSave = MultipartParserHandleEndOfBuffer(pRequest, pContext, szStringSave, szStringEnd, pContext -> state);
 			return OK;
 		}
+
 	}
 return OK;
 }
